@@ -18,11 +18,12 @@ Inputs:
 - allocator: scratch memory for lookups, freed before env_apply returns.
 
 Returns:
-- err: the first os.Error from setting a variable. Variables before it stay set.
+- err: the first os.Error from setting a variable, or an allocator error from
+  reading one. Variables before it stay set.
 */
 env_apply :: proc(env: Env, overwrite := false, allocator := context.allocator) -> (err: Error) {
 	for key in env.keys {
-		if !overwrite && _process_has(key, allocator) {
+		if !overwrite && (_process_has(key, allocator) or_return) {
 			continue
 		}
 		os.set_env(key, env.vars[key]) or_return
@@ -58,9 +59,11 @@ load :: proc(path := ".env", options := Options{}, allocator := context.allocato
 	return
 }
 
+// _process_has fails rather than guess when it can't read the variable.
 @(private)
-_process_has :: proc(key: string, allocator := context.allocator) -> bool {
-	value, found := os.lookup_env(key, allocator)
+_process_has :: proc(key: string, allocator := context.allocator) -> (found: bool, err: Error) {
+	value: string
+	value, found = _lookup_process_env(key, allocator) or_return
 	delete(value, allocator)
-	return found
+	return found, nil
 }

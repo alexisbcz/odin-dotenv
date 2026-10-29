@@ -363,15 +363,59 @@ lookup resolves `name` against the keys parsed so far, then the process
 environment. When `allocated` is true the caller must delete `value`.
 */
 @(private = "file")
-lookup :: proc(p: ^Parser, name: string) -> (value: string, found: bool, allocated: bool) {
+lookup :: proc(p: ^Parser, name: string) -> (value: string, found: bool, allocated: bool, err: Error) {
 	if v, ok := p.env.vars[name]; ok {
-		return v, true, false
+		return v, true, false, nil
 	}
 	if p.options.ignore_process_env {
-		return "", false, false
+		return "", false, false, nil
 	}
-	value, found = os.lookup_env(name, p.allocator)
-	return value, found, found
+	value, found = _lookup_process_env(name, p.allocator) or_return
+	return value, found, found, nil
+}
+
+/*
+_lookup_process_env wraps os.lookup_env, which reports a failed copy of the
+value as a found, empty variable. It returns that failure as an error instead.
+*/
+@(private)
+_lookup_process_env :: proc(key: string, allocator: runtime.Allocator) -> (value: string, found: bool, err: Error) {
+	watch := Alloc_Watch {
+		backing = allocator,
+	}
+	value, found = os.lookup_env(key, runtime.Allocator{procedure = alloc_watch_proc, data = &watch})
+	if watch.err != nil {
+		delete(value, allocator)
+		return "", false, watch.err
+	}
+	return value, found, nil
+}
+
+// Alloc_Watch forwards to `backing` and remembers the first allocation error.
+@(private = "file")
+Alloc_Watch :: struct {
+	backing: runtime.Allocator,
+	err:     runtime.Allocator_Error,
+}
+
+@(private = "file")
+alloc_watch_proc :: proc(
+	data: rawptr,
+	mode: runtime.Allocator_Mode,
+	size, alignment: int,
+	old_memory: rawptr,
+	old_size: int,
+	loc := #caller_location,
+) -> (
+	[]byte,
+	runtime.Allocator_Error,
+) {
+	w := (^Alloc_Watch)(data)
+	bytes, err := w.backing.procedure(w.backing.data, mode, size, alignment, old_memory, old_size, loc)
+	if err != nil && err != .Mode_Not_Implemented && w.err == nil {
+		w.err = err
+	}
+	return bytes, err
 }
 
 // ends_expansion reports whether the character at `pos` can't be part of a `${...}` body.
@@ -426,7 +470,7 @@ expand :: proc(p: ^Parser, quote: byte, emit: bool) -> Error {
 		}
 		p.pos += 1
 
-		value, found, allocated := lookup(p, name)
+		value, found, allocated := lookup(p, name) or_return
 		defer if allocated {
 			delete(value, p.allocator)
 		}
@@ -467,7 +511,7 @@ expand :: proc(p: ^Parser, quote: byte, emit: bool) -> Error {
 
 @(private = "file")
 emit_lookup :: proc(p: ^Parser, name: string) -> Error {
-	value, _, allocated := lookup(p, name)
+	value, _, allocated := lookup(p, name) or_return
 	defer if allocated {
 		delete(value, p.allocator)
 	}

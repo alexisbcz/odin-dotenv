@@ -1123,3 +1123,62 @@ test_error_nul_byte_in_value :: proc(t: ^testing.T) {
 	// A NUL byte in a comment never reaches a value, so it's harmless.
 	expect_one(t, "# a\x00b\nA=1 # c\x00d\n", "A", "1")
 }
+
+@(test)
+test_process_env_allocation_failures_are_reported :: proc(t: ^testing.T) {
+	track: mem.Tracking_Allocator
+	context.allocator = leak_check(t, &track)
+	sync.guard(&env_mutex)
+
+	testing.expect_value(t, os.set_env("DOTENV_TEST_OOM_LOOKUP", "from-process"), nil)
+	defer os.unset_env("DOTENV_TEST_OOM_LOOKUP")
+
+	// A failed copy of a process variable must surface as an error, never as an
+	// empty value that silently selects the default.
+	// Only one allocation fails per attempt, so later allocations can't hide it.
+	src := "A=${DOTENV_TEST_OOM_LOOKUP:-fallback}\nB=$DOTENV_TEST_OOM_LOOKUP\n"
+	succeeded := false
+	for nth in 0 ..< 200 {
+		single := Single_Failure{backing = context.allocator, fail_at = nth}
+		allocator := runtime.Allocator{procedure = single_failure_proc, data = &single}
+
+		env, err, _ := dotenv.parse(src, {}, allocator)
+		if err == nil {
+			expect_var(t, env, "A", "from-process")
+			expect_var(t, env, "B", "from-process")
+			dotenv.env_destroy(&env)
+			// Stop once a run needed fewer allocations than the one set to fail.
+			succeeded = single.count <= nth
+			if succeeded {
+				break
+			}
+			continue
+		}
+		testing.expect_value(t, err, dotenv.Error(runtime.Allocator_Error.Out_Of_Memory))
+		testing.expect(t, env.vars == nil)
+	}
+	testing.expect(t, succeeded)
+}
+
+@(test)
+test_env_apply_reports_lookup_allocation_failure :: proc(t: ^testing.T) {
+	track: mem.Tracking_Allocator
+	context.allocator = leak_check(t, &track)
+	sync.guard(&env_mutex)
+
+	testing.expect_value(t, os.set_env("DOTENV_TEST_APPLY_OOM", "original"), nil)
+	defer os.unset_env("DOTENV_TEST_APPLY_OOM")
+
+	env, err, _ := dotenv.parse("DOTENV_TEST_APPLY_OOM=new\n", PURE)
+	defer dotenv.env_destroy(&env)
+	testing.expect_value(t, err, nil)
+
+	// env_apply can't tell whether the variable exists, so it must stop, not guess.
+	budget := Budget{backing = context.allocator, remaining = 0}
+	failing := runtime.Allocator{procedure = budget_proc, data = &budget}
+	testing.expect_value(t, dotenv.env_apply(env, false, failing), dotenv.Error(runtime.Allocator_Error.Out_Of_Memory))
+
+	value := os.get_env("DOTENV_TEST_APPLY_OOM", context.allocator)
+	defer delete(value)
+	testing.expect_value(t, value, "original")
+}
