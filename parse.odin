@@ -206,22 +206,37 @@ parse_line :: proc(p: ^Parser) -> Error {
 	return set_var(p, key, string(p.buf[:]))
 }
 
-// set_var stores a copy of `key` and `value`, replacing any earlier value.
+/*
+set_var stores a copy of `key` and `value`, replacing any earlier value. It
+leaves the Env unchanged when an allocation fails.
+*/
 @(private = "file")
 set_var :: proc(p: ^Parser, key, value: string) -> Error {
 	owned_value := strings.clone(value, p.allocator) or_return
-	if existing, found := &p.env.vars[key]; found {
-		delete(existing^, p.allocator)
-		existing^ = owned_value
+	key_ptr, value_ptr, just_inserted, entry_err := map_entry(&p.env.vars, key)
+	if entry_err != nil {
+		delete(owned_value, p.allocator)
+		return entry_err
+	}
+	if !just_inserted {
+		delete(value_ptr^, p.allocator)
+		value_ptr^ = owned_value
 		return nil
 	}
+
+	// The new entry borrows `key` from the source until it gets its own copy.
 	owned_key, err := strings.clone(key, p.allocator)
+	if err == nil {
+		_, err = append(&p.env.keys, owned_key)
+	}
 	if err != nil {
+		delete_key(&p.env.vars, key)
+		delete(owned_key, p.allocator)
 		delete(owned_value, p.allocator)
 		return err
 	}
-	p.env.vars[owned_key] = owned_value
-	_ = append(&p.env.keys, owned_key) or_return
+	key_ptr^ = owned_key
+	value_ptr^ = owned_value
 	return nil
 }
 
