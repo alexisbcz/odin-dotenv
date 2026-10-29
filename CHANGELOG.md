@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-29
+
+### Added
+
+- `Parse_Error.Invalid_Character` for values that contain a NUL byte.
+
+### Fixed
+
+- `load` no longer cuts a value at a NUL byte without warning. `parse` now rejects such values, because the process environment can't hold them.
+- A failed copy of a process variable now returns `Out_Of_Memory`. Before, the variable expanded to an empty string, and `${NAME:-default}` silently used the default.
+- `env_apply` returns that allocation error instead of guessing whether a variable is already set.
+
 ## [0.1.0] - 2026-10-29
 
 ### Added
@@ -17,5 +29,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `Parse_Error` values with a 1-based line and column for malformed input.
 - Support for CRLF line endings and a leading UTF-8 byte order mark.
 
-[Unreleased]: https://github.com/alexisbcz/odin-dotenv/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/alexisbcz/odin-dotenv/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/alexisbcz/odin-dotenv/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/alexisbcz/odin-dotenv/releases/tag/v0.1.0
