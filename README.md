@@ -137,6 +137,7 @@ Malformed input returns a `Parse_Error` and the `Location` of the offending char
 | `.Unterminated_Expansion` | A `${` has no `}` on the same line or inside its quotes. |
 | `.Invalid_Expansion` | A `${}` with an empty or invalid name, or an operator other than `-` and `?`. |
 | `.Required_Variable_Unset` | A `${NAME:?}` or `${NAME?}` check failed. |
+| `.Invalid_Character` | A value contains a NUL byte, which the process environment can't hold. |
 
 On any error, `parse` returns a zero `Env`, and `load` sets no variables.
 

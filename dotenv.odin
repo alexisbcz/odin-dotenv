@@ -55,6 +55,8 @@ Parse_Error :: enum {
 	Invalid_Expansion,
 	// A `${NAME:?}` or `${NAME?}` expansion names a variable that isn't set.
 	Required_Variable_Unset,
+	// A value contains a NUL byte, which the process environment can't hold.
+	Invalid_Character,
 }
 
 /*

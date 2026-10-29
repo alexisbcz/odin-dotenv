@@ -1110,3 +1110,16 @@ test_single_allocation_failures_are_reported :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, succeeded)
 }
+
+@(test)
+test_error_nul_byte_in_value :: proc(t: ^testing.T) {
+	track: mem.Tracking_Allocator
+	context.allocator = leak_check(t, &track)
+	// The process environment can't hold NUL, so load would silently truncate these values.
+	expect_error(t, "A=a\x00b\n", .Invalid_Character, 1, 4)
+	expect_error(t, "A=\"a\x00b\"\n", .Invalid_Character, 1, 5)
+	expect_error(t, "A='a\x00b'\n", .Invalid_Character, 1, 5)
+	expect_error(t, "A=${X:-a\x00b}\n", .Invalid_Character, 1, 9)
+	// A NUL byte in a comment never reaches a value, so it's harmless.
+	expect_one(t, "# a\x00b\nA=1 # c\x00d\n", "A", "1")
+}

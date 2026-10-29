@@ -140,8 +140,13 @@ read_name :: proc(p: ^Parser, allow_dots: bool) -> string {
 	return p.src[start:p.pos]
 }
 
+// emit_byte appends `c`, which callers read from the source at p.pos, to the value.
 @(private = "file")
 emit_byte :: proc(p: ^Parser, c: byte) -> Error {
+	if c == 0 {
+		// setenv takes C strings, so load would silently cut the value here.
+		return fail(p, .Invalid_Character, p.pos)
+	}
 	_ = append(&p.buf, c) or_return
 	return nil
 }
