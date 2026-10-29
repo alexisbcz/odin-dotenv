@@ -1027,6 +1027,36 @@ test_allocation_failures_never_leak :: proc(t: ^testing.T) {
 	testing.expect(t, succeeded)
 }
 
+// Single_Failure fails only the allocation numbered `fail_at`, counting from 0.
+Single_Failure :: struct {
+	backing: runtime.Allocator,
+	fail_at: int,
+	count:   int,
+}
+
+single_failure_proc :: proc(
+	data: rawptr,
+	mode: runtime.Allocator_Mode,
+	size, alignment: int,
+	old_memory: rawptr,
+	old_size: int,
+	loc := #caller_location,
+) -> (
+	[]byte,
+	runtime.Allocator_Error,
+) {
+	s := (^Single_Failure)(data)
+	#partial switch mode {
+	case .Alloc, .Alloc_Non_Zeroed, .Resize, .Resize_Non_Zeroed:
+		n := s.count
+		s.count += 1
+		if n == s.fail_at {
+			return nil, .Out_Of_Memory
+		}
+	}
+	return s.backing.procedure(s.backing.data, mode, size, alignment, old_memory, old_size, loc)
+}
+
 @(test)
 test_parse_large_input :: proc(t: ^testing.T) {
 	track: mem.Tracking_Allocator
@@ -1044,4 +1074,39 @@ test_parse_large_input :: proc(t: ^testing.T) {
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, len(env.keys), 2001)
 	expect_var(t, env, "LAST", "value_1999")
+}
+
+// ---- Regressions ----
+
+@(test)
+test_single_allocation_failures_are_reported :: proc(t: ^testing.T) {
+	track: mem.Tracking_Allocator
+	context.allocator = leak_check(t, &track)
+
+	// Unlike the budget test, later allocations succeed again, so an error that
+	// a step drops can't be masked by the next allocation failing.
+	src := "A=1\nB=\"two ${A}\"\nA=3\nC=${MISSING:-fallback} tail\nD='x'\nB=$A$A\n"
+	succeeded := false
+	for nth in 0 ..< 200 {
+		single := Single_Failure{backing = context.allocator, fail_at = nth}
+		allocator := runtime.Allocator{procedure = single_failure_proc, data = &single}
+
+		env, err, _ := dotenv.parse(src, PURE, allocator)
+		if err == nil {
+			expect_var(t, env, "A", "3")
+			expect_var(t, env, "B", "33")
+			expect_var(t, env, "C", "fallback tail")
+			expect_var(t, env, "D", "x")
+			testing.expect_value(t, len(env.keys), 4)
+			dotenv.env_destroy(&env)
+			succeeded = single.count <= nth
+			if succeeded {
+				break
+			}
+			continue
+		}
+		testing.expect_value(t, err, dotenv.Error(runtime.Allocator_Error.Out_Of_Memory))
+		testing.expect(t, env.vars == nil)
+	}
+	testing.expect(t, succeeded)
 }
